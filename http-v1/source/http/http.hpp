@@ -6,7 +6,6 @@
 #include <regex>
 #include <string>
 #include <sys/stat.h>
-#include <vector>
 std::unordered_map<int, std::string> _statu_msg = {
     {100, "Continue"},
     {101, "Switching Protocol"},
@@ -331,7 +330,7 @@ public:
   std::unordered_map<std::string, std::string> _params;
 
 public:
-  void ReSet() {
+  void Reset() {
     _method.clear();
     _path.clear();
     _version.clear();
@@ -402,8 +401,8 @@ public:
   std::string _body;
   std::string _redirect_url;
   std::unordered_map<std::string, std::string> _headers;
-  HttpResponse() : _redirect_flag(false), _statu(200) {}
-  void ReSet() {
+  HttpResponse(int statu = 200) : _redirect_flag(false), _statu(statu) {}
+  void Reset() {
     _statu = 200;
     _redirect_flag = false;
     _body.clear();
@@ -462,7 +461,8 @@ private:
   bool RecvHttpLine(std::string str) {
     std::smatch matches;
     std::regex e("(GET|HEAD|POST|PUT|DELETE) ([^?]*)(?:\\?(.*))? "
-                 "(HTTP/1\\.[01])(?:\n|\r\n)?");
+                 "(HTTP/1\\.[01])(?:\n|\r\n)?",
+                 std::regex::icase);
     // GET|HEAD|POST|PUT|DELETE 表示匹配并提取其中的任意一个字符串
     //([^?]*) [^?] 表示匹配除?以外的任意字符 *表示0或1个字符串
     //\\?(.*) 表示匹配?字符并提取?字符后面的所有字符直到遇到空格
@@ -475,6 +475,8 @@ private:
     }
     //请求方法获取
     _request._method = matches[1];
+    std::transform(_request._method.begin(), _request._method.end(),
+                   _request._method.begin(), ::toupper);
     //资源路径的获取，需进行URL解码操作，但不需要+转空格
     _request._path = Util::UrlDecode(matches[2], false);
     //协议版本的获取
@@ -588,6 +590,12 @@ private:
   };
 
 public:
+  void Reset() {
+    _resp_statu = 200;
+    _recv_statu = RECV_HTTP_LINE;
+    _request.Reset();
+    _request._body.clear();
+  }
   HttpContext() : _resp_statu(200), _recv_statu(RECV_HTTP_LINE) {}
   int ResponseStatu() { return _resp_statu; };       //返回响应码
   HttpRecvStatu RecvStatu() { return _recv_statu; }; //返回接收状态
@@ -610,5 +618,208 @@ public:
 class HttpServer {
 private:
   using Handler = std::function<void(const HttpRequest &, HttpResponse *)>;
-  
+  using Handlers = std::vector<std::pair<std::regex, Handler>>;
+  Handlers _get_route;
+  Handlers _post_route;
+  Handlers _put_route;
+  Handlers _delete_route;
+  std::string _basedir; //静态资源根目录
+  TcpServer _server;
+
+private:
+  void ErrorHandler(const HttpRequest &req, HttpResponse *rsp) {
+    //组织错误展示页面
+    std::string body;
+    body += "<html>";
+    body += "<head>";
+    body += "<meta http-equiv='Content-Type' content='text/html; charset=utf-8'>";
+    body += "</head>";
+    body += "<body>";
+    body += "<h1>";
+    body += std::to_string(rsp->_statu);
+    body += " ";
+    body += Util::StatuDesc(rsp->_statu);
+    body += "</h1>";
+    body += "</body>";
+    body += "</html>";
+    //将页面数据当作响应正文，放入rsp中
+    rsp->SetContent(body, "text/html");
+  };
+  void WriteResponse(const PtrConnection &conn, HttpRequest &req,
+                     HttpResponse *rsp) {
+    // 1.先完善头部字段
+    if (req.IsKeepAlive() == true) {
+      rsp->SetHeader("Connection", "keep-alive");
+    } else {
+      rsp->SetHeader("Connection", "close");
+    }
+    if (rsp->_body.empty() == false &&
+        rsp->HasHeader("Content-Length") == false) {
+      rsp->SetHeader("Content-Length", std::to_string(rsp->_body.size()));
+    }
+    if (rsp->_body.empty() == false &&
+        rsp->HasHeader("Content-Type") == false) {
+      rsp->SetHeader("Content-Type", "application/octet-stream");
+    }
+    if (rsp->_redirect_flag == true) {
+      rsp->SetHeader("Location", rsp->_redirect_url);
+    }
+    // 2.将rsp中的要素，按照http协议格式进行组织
+    std::string rsp_str;
+    rsp_str += req._version + " " + std::to_string(rsp->_statu) + " " +
+               Util::StatuDesc(rsp->_statu) + "\r\n";
+    for (auto &head : rsp->_headers) {
+      rsp_str += head.first + ": " + head.second + "\r\n";
+    }
+    rsp_str += "\r\n";
+    rsp_str += rsp->_body;
+    // 3.发送响应
+    conn->Send(rsp_str.c_str(), rsp_str.size());
+  };
+  //静态资源请求处理
+
+  bool IsFileHandler(HttpRequest &req) {
+    // 1.必须设置了静态资源根目录，才能判断是否是静态资源请求
+    if (_basedir.empty() == true) {
+      return false;
+    }
+    // 2.请求方法，必须是GET / HEAD请求方法
+    if (req._method != "GET" && req._method != "HEAD") {
+      return false;
+    }
+    // 3.请求的资源路径必须合法
+    if (Util::ValidPath(req._path) == false) {
+      return false;
+    }
+    // 4.请求的资源路径必须存在
+    //如果请求的是根目录，这种情况给都变默认最佳一个index.html
+    std::string req_path = _basedir + req._path;
+    if (req._path.back() == '/') {
+      req_path += "/index.html";
+    }
+    // index.html /image/a.png
+    //前缀的相对根目录 /image/a.png -> ./wwwroot/image/a.png
+    if (Util::IsRegular(req_path) == false) {
+      return false;
+    }
+    req._path = req_path; //如果请求就是静态资源请求，则有可能需要追加index.html
+    return true;
+  };
+  bool FileHandler(HttpRequest &req, HttpResponse *rsp){
+    bool ret = Util::ReadFile(req._path,&rsp->_body);
+    if(ret == false){
+      rsp->_statu = 404;
+      return false;
+    }
+    std::string mime = Util::ExtMime(req._path);
+    rsp->SetHeader("Content-Type", mime);
+    rsp->_statu = 200;
+    return true;
+  };
+  void Dispatcher(HttpRequest &req, HttpResponse *rsp,
+                  Handlers &handlers) {
+    //在对应请求方法的路由表中，查找是否含有对应资源请求的处理函数，又则调用，没有404
+    //路由表中存贮的键值对为：正则表达式-处理函数
+    //使用正则表达式，对请求的资源路径进行正则匹配，匹配成功就使用对应函数进行处理
+    // /number/(\d+) 匹配 /number/123
+    for (auto &handler : handlers) {
+      std::regex &re = handler.first;
+      Handler &functor = handler.second;
+      bool ret = std::regex_match(req._path, req._matches, re);
+      if (ret == false) {
+        continue;
+      }
+      return functor(req, rsp);
+    }
+    rsp->_statu = 404;
+  };
+  void Route(HttpRequest &req, HttpResponse *rsp) {
+    //对请求进行分辨，是静态资源请求还是功能性请求
+    // 静态资源请求，则进行静态资源的处理
+    // 功能性请求，则需要通过几个请求路由表来确定是否有处理函数
+    // 既不是静态资源请求，也不是功能性请求，则回复404响应
+    if (IsFileHandler(req) == true) {
+      //静态资源请求
+      FileHandler(req, rsp);
+      return;
+    }
+    //功能性请求
+    if (req._method == "GET" || req._method == "HEAD") {
+      return Dispatcher(req, rsp, _get_route);
+    } else if (req._method == "POST") {
+      return Dispatcher(req, rsp, _post_route);
+    } else if (req._method == "PUT") {
+      return Dispatcher(req, rsp, _put_route);
+    } else if (req._method == "DELETE") {
+      return Dispatcher(req, rsp, _delete_route);
+    }
+    //到这里说明都没匹配成功
+    rsp->_statu = 405; // 405 Method Not Allowed
+  };
+  //设置上下文
+  void OnConnected(const PtrConnection &conn) {
+    // 1.创建上下文
+    conn->SetContext(new HttpContext());
+    DBG_LOG("NEW CONNECTION %p", conn.get());
+  };
+  //核心函数
+  void OnMessage(const PtrConnection &conn, Buffer *buffer) {
+    // 1.获取上下文
+    HttpContext *context = conn->GetContext()->get<HttpContext>();
+    // 2.通过上下文对缓冲区数据进行解析，得到HttpResponse对象
+    //如果缓冲区的数据解析出错，就直接回复出错响应
+    //如果解析正常且请求已获取完毕，才开始去进行处理
+    context->RecvHttpRequest(buffer);
+    HttpRequest &req = context->Request();
+    HttpResponse rsp;
+    rsp._statu = context->ResponseStatu();
+    if (context->ResponseStatu() >= 400) {
+      //解析出错，直接回复出错响应
+      ErrorHandler(req, &rsp);
+      WriteResponse(PtrConnection(conn), req, &rsp);
+      return;
+    }
+    if (context->RecvStatu() != RECV_HTTP_OVER) {
+      //不是完整请求
+      return;
+      //退出，等待新数据到来重新继续处理
+    }
+    // 3.请求路由 业务处理
+    Route(req, &rsp);
+    // 4.对HttpResponse对象进行组织并发送
+    WriteResponse(PtrConnection(conn), req, &rsp);
+    // 5.重置上下文
+    context->Reset();
+    // 6.根据是否为长连接，判断是否需要关闭连接
+    if (rsp.CloseConnection() == true)
+      conn->Shutdown();
+  };
+
+public:
+  HttpServer(int port,int timeout = DEFAULT_TIMEOUT):_server(port){
+    _server.EnableInactiveRelease(timeout);
+    _server.SetConnectedCallback(std::bind(&HttpServer::OnConnected, this, std::placeholders::_1));
+    _server.SetMessageCallback(std::bind(&HttpServer::OnMessage, this, std::placeholders::_1, std::placeholders::_2));
+  }
+  void SetBaseDir(const std::string &path){
+    _basedir = path;
+  };
+  void Get(const std::string &pattern, Handler handler){
+    _get_route.push_back(std::make_pair(std::regex(pattern), handler));
+  };
+  void Post(const std::string &pattern, Handler handler){
+    _post_route.push_back(std::make_pair(std::regex(pattern), handler));
+  };
+  void Put(const std::string &pattern, Handler handler){
+    _put_route.push_back(std::make_pair(std::regex(pattern), handler));
+  };
+  void Delete(const std::string &pattern, Handler handler){
+    _delete_route.push_back(std::make_pair(std::regex(pattern), handler));
+  };
+  void SetThreadCount(int count){
+    _server.SetThreadCount(count);
+  };
+  void Listen(){
+    _server.Start();
+  };
 };

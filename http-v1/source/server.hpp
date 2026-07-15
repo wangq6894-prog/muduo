@@ -26,6 +26,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
+#define DEFAULT_TIMEOUT 30
 #define INF 0
 #define DBG 1
 #define ERR 2
