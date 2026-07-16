@@ -424,7 +424,7 @@ public:
     }
     return _headers[key];
   };
-  void SetContent(std::string &body, const std::string &type = "text/html") {
+  void SetContent(const std::string &body, const std::string &type = "text/html") {
     _body = body;
     SetHeader("Content-Type", type);
   };
@@ -435,7 +435,7 @@ public:
   };
   bool CloseConnection() {
     if (HasHeader("Connection") == true &&
-        GetHeader("Connection") == "keep-alive") {
+        GetHeader("Connection") == "close") {
       return true;
     }
     return false;
@@ -632,7 +632,8 @@ private:
     std::string body;
     body += "<html>";
     body += "<head>";
-    body += "<meta http-equiv='Content-Type' content='text/html; charset=utf-8'>";
+    body +=
+        "<meta http-equiv='Content-Type' content='text/html; charset=utf-8'>";
     body += "</head>";
     body += "<body>";
     body += "<h1>";
@@ -705,9 +706,9 @@ private:
     req._path = req_path; //如果请求就是静态资源请求，则有可能需要追加index.html
     return true;
   };
-  bool FileHandler(HttpRequest &req, HttpResponse *rsp){
-    bool ret = Util::ReadFile(req._path,&rsp->_body);
-    if(ret == false){
+  bool FileHandler(HttpRequest &req, HttpResponse *rsp) {
+    bool ret = Util::ReadFile(req._path, &rsp->_body);
+    if (ret == false) {
       rsp->_statu = 404;
       return false;
     }
@@ -716,8 +717,7 @@ private:
     rsp->_statu = 200;
     return true;
   };
-  void Dispatcher(HttpRequest &req, HttpResponse *rsp,
-                  Handlers &handlers) {
+  void Dispatcher(HttpRequest &req, HttpResponse *rsp, Handlers &handlers) {
     //在对应请求方法的路由表中，查找是否含有对应资源请求的处理函数，又则调用，没有404
     //路由表中存贮的键值对为：正则表达式-处理函数
     //使用正则表达式，对请求的资源路径进行正则匹配，匹配成功就使用对应函数进行处理
@@ -759,7 +759,7 @@ private:
   //设置上下文
   void OnConnected(const PtrConnection &conn) {
     // 1.创建上下文
-    conn->SetContext(new HttpContext());
+    conn->SetContext(HttpContext());
     DBG_LOG("NEW CONNECTION %p", conn.get());
   };
   //核心函数
@@ -796,30 +796,31 @@ private:
   };
 
 public:
-  HttpServer(int port,int timeout = DEFAULT_TIMEOUT):_server(port){
+  HttpServer(int port, int timeout = DEFAULT_TIMEOUT) : _server(port) {
     _server.EnableInactiveRelease(timeout);
-    _server.SetConnectedCallback(std::bind(&HttpServer::OnConnected, this, std::placeholders::_1));
-    _server.SetMessageCallback(std::bind(&HttpServer::OnMessage, this, std::placeholders::_1, std::placeholders::_2));
+    _server.SetConnectedCallback(
+        std::bind(&HttpServer::OnConnected, this, std::placeholders::_1));
+    _server.SetMessageCallback(std::bind(&HttpServer::OnMessage, this,
+                                         std::placeholders::_1,
+                                         std::placeholders::_2));
   }
-  void SetBaseDir(const std::string &path){
+  void SetBaseDir(const std::string &path) {
+    bool ret = Util::IsDirectory(path);
+    assert(ret == true);
     _basedir = path;
   };
-  void Get(const std::string &pattern, Handler handler){
+  void Get(const std::string &pattern, Handler handler) {
     _get_route.push_back(std::make_pair(std::regex(pattern), handler));
   };
-  void Post(const std::string &pattern, Handler handler){
+  void Post(const std::string &pattern, Handler handler) {
     _post_route.push_back(std::make_pair(std::regex(pattern), handler));
   };
-  void Put(const std::string &pattern, Handler handler){
+  void Put(const std::string &pattern, Handler handler) {
     _put_route.push_back(std::make_pair(std::regex(pattern), handler));
   };
-  void Delete(const std::string &pattern, Handler handler){
+  void Delete(const std::string &pattern, Handler handler) {
     _delete_route.push_back(std::make_pair(std::regex(pattern), handler));
   };
-  void SetThreadCount(int count){
-    _server.SetThreadCount(count);
-  };
-  void Listen(){
-    _server.Start();
-  };
+  void SetThreadCount(int count) { _server.SetThreadCount(count); };
+  void Listen() { _server.Start(); };
 };

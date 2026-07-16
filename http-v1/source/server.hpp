@@ -451,7 +451,7 @@ public:
     ev.data.fd = fd;
     int ret = epoll_ctl(_epfd, op, fd, &ev);
     if (ret < 0) {
-      ERR_LOG("epoll_ctl failed");
+      ERR_LOG("epoll_ctl failed: fd=%d, op=%d, errno=%d (%s)", fd, op, errno, strerror(errno));
     }
   };
   void UpdateEvent(Channel *channel) {
@@ -958,6 +958,8 @@ private:
     }
   };
   void ReleaseInLoop() {
+    if (_status == DISCONNECTED) return;
+    auto self = shared_from_this();
     _status = DISCONNECTED;
     _channel.Remove();
     _socket.Close();
@@ -965,11 +967,12 @@ private:
       CancelInactiveReleaseInLoop();
     }
     if (_closed_callback)
-      _closed_callback(shared_from_this());
+      _closed_callback(self);
     if (_server_closed_callback)
-      _server_closed_callback(shared_from_this());
+      _server_closed_callback(self);
   }; //实际的释放接口
   void EstablishedInLoop() {
+    if (_status != CONNECTING) return;
     //修改连接状态
     assert(_status == CONNECTING);
     _status = CONNECTED;
