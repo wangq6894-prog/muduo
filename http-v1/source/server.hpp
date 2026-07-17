@@ -1147,6 +1147,7 @@ private:
       conn->EnableInactiveRelease(_timeout);
     conn->Established();
     _conns.insert(std::make_pair(_next_id, conn));
+    _next_id++;
   };
   void RemoveConnectionInLoop(const PtrConnection &conn){
     int id = conn -> Id();
