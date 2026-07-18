@@ -7,7 +7,7 @@ TARGETS = $(SRCS:.cc=)
 all: $(TARGETS)
 
 %: %.cc
-	$(CXX) $(CXXFLAGS) -o $@ $<
+	$(CXX) $(CXXFLAGS) -g -o $@ $< -lpthread
 clean:
 	rm -f $(TARGETS)
 
