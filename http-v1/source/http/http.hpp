@@ -1,5 +1,6 @@
 #include "../server.hpp"
 #include <cassert>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
@@ -424,7 +425,8 @@ public:
     }
     return _headers[key];
   };
-  void SetContent(const std::string &body, const std::string &type = "text/html") {
+  void SetContent(const std::string &body,
+                  const std::string &type = "text/html") {
     _body = body;
     SetHeader("Content-Type", type);
   };
@@ -434,8 +436,7 @@ public:
     _redirect_flag = true;
   };
   bool CloseConnection() {
-    if (HasHeader("Connection") == true &&
-        GetHeader("Connection") == "close") {
+    if (HasHeader("Connection") == true && GetHeader("Connection") == "close") {
       return true;
     }
     return false;
@@ -545,7 +546,11 @@ private:
     return true;
   };
   //解析单行请求头
-  bool ParseHttpHead(const std::string &line) {
+  bool ParseHttpHead(std::string &line) {
+    if (line.back() == '\n')
+      line.pop_back();
+    if (line.back() == '\r')
+      line.pop_back();
     size_t pos = line.find(": ");
     if (pos == std::string::npos) {
       _recv_statu = RECV_HTTP_ERROR;
@@ -651,8 +656,10 @@ private:
     // 1.先完善头部字段
     if (req.IsKeepAlive() == true) {
       rsp->SetHeader("Connection", "keep-alive");
+      DBG_LOG("CONNECTION IS keep-alive");
     } else {
       rsp->SetHeader("Connection", "close");
+      DBG_LOG("CONNECTION IS close");
     }
     if (rsp->_body.empty() == false &&
         rsp->HasHeader("Content-Length") == false) {
@@ -777,6 +784,9 @@ private:
       //解析出错，直接回复出错响应
       ErrorHandler(req, &rsp);
       WriteResponse(PtrConnection(conn), req, &rsp);
+      context->Reset();
+      buffer->MoveReadOffset(buffer->ReadAbleSize());
+      conn->Shutdown();
       return;
     }
     if (context->RecvStatu() != RECV_HTTP_OVER) {

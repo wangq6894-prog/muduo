@@ -1,6 +1,5 @@
 #ifndef __M_SERVER_H__
 #define __M_SERVER_H__
-#include <signal.h>
 #include <arpa/inet.h>
 #include <cassert>
 #include <condition_variable>
@@ -14,6 +13,7 @@
 #include <mutex>
 #include <netinet/in.h>
 #include <pthread.h>
+#include <signal.h>
 #include <string>
 #include <sys/epoll.h>
 #include <sys/eventfd.h>
@@ -26,7 +26,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
-#define DEFAULT_TIMEOUT 30
+#define DEFAULT_TIMEOUT 10
 #define INF 0
 #define DBG 1
 #define ERR 2
@@ -403,16 +403,10 @@ public:
     // 对方关闭了连接，或者读取到数据，或者有优先数据可读
     if ((_revents & EPOLLIN) || (_revents & EPOLLRDHUP) ||
         (_revents & EPOLLPRI)) {
-      //不管任何时间都触发任意事件回调
-      if (_event_callback) {
-        //触发任意事件回调
-        _event_callback();
-      }
       //触发可读事件回调
       if (_read_callback)
         _read_callback();
     }
-
     /*有可能会释放连接的操作事件，一次只处理一个*/
     if (_revents & EPOLLOUT) {
       //触发可写事件
@@ -426,6 +420,11 @@ public:
       //触发连接断开事件
       if (_close_callback)
         _close_callback();
+      //不管任何时间都触发任意事件回调
+      if (_event_callback) {
+        //触发任意事件回调
+        _event_callback();
+      }
     }
   }
 };
@@ -451,7 +450,8 @@ public:
     ev.data.fd = fd;
     int ret = epoll_ctl(_epfd, op, fd, &ev);
     if (ret < 0) {
-      ERR_LOG("epoll_ctl failed: fd=%d, op=%d, errno=%d (%s)", fd, op, errno, strerror(errno));
+      ERR_LOG("epoll_ctl failed: fd=%d, op=%d, errno=%d (%s)", fd, op, errno,
+              strerror(errno));
     }
   };
   void UpdateEvent(Channel *channel) {
@@ -903,7 +903,7 @@ private:
       return Shutdown();
     } else if (ret == 0) {
       //对端关闭连接
-      return ReleaseInLoop();
+      return Release();
     } else if (ret > 0) {
       _in_buffer.WriteAndPush(buf, ret);
       if (_in_buffer.ReadAbleSize() > 0) {
@@ -920,13 +920,13 @@ private:
       if (_in_buffer.ReadAbleSize() > 0) {
         _message_callback(shared_from_this(), &_in_buffer);
       }
-      return ReleaseInLoop();
+      return Release();
     }
     _out_buffer.MoveReadOffset(ret); //移动读偏移
     if (_out_buffer.ReadAbleSize() == 0) {
       _channel.DisableWrite();
       if (_status == DISCONNECTING) {
-        return ReleaseInLoop();
+        return Release();
       }
     }
     return;
@@ -935,7 +935,7 @@ private:
     if (_in_buffer.ReadAbleSize() > 0) {
       _message_callback(shared_from_this(), &_in_buffer);
     }
-    return ReleaseInLoop();
+    return Release();
   };
   void HandleError() { return HandleClose(); };
   void HandleEvent() {
@@ -958,7 +958,8 @@ private:
     }
   };
   void ReleaseInLoop() {
-    if (_status == DISCONNECTED) return;
+    if (_status == DISCONNECTED)
+      return;
     auto self = shared_from_this();
     _status = DISCONNECTED;
     _channel.Remove();
@@ -971,8 +972,10 @@ private:
     if (_server_closed_callback)
       _server_closed_callback(self);
   }; //实际的释放接口
+
   void EstablishedInLoop() {
-    if (_status != CONNECTING) return;
+    if (_status != CONNECTING)
+      return;
     //修改连接状态
     assert(_status == CONNECTING);
     _status = CONNECTED;
@@ -994,7 +997,7 @@ private:
       }
     }
     if (_out_buffer.ReadAbleSize() == 0) {
-      ReleaseInLoop();
+      Release();
     }
   };
   void EnableInactiveReleaseInLoop(int sec) {
@@ -1003,7 +1006,7 @@ private:
     if (_loop->HasTimer(_conn_id)) {
       return _loop->TimerRefresh(_conn_id);
     }
-    _loop->TimerAdd(_conn_id, sec, std::bind(&Connection::ReleaseInLoop, this));
+    _loop->TimerAdd(_conn_id, sec, std::bind(&Connection::Release, this));
   }; //启动非活跃连接超时释放规则
   void CancelInactiveReleaseInLoop() {
     //判断标志 _enable_inactive_release 是否为false
@@ -1060,6 +1063,9 @@ public:
     buf.WriteAndPush(data, len);
     _loop->RunInLoop(std::bind(&Connection::SendInLoop, this, buf));
   }; //发送数据，将数据放入发送缓冲区，启动事件监控
+  void Release() {
+    _loop->QueueInLoop(std::bind(&Connection::ReleaseInLoop, this));
+  }
   void Shutdown() {
     _loop->RunInLoop(std::bind(&Connection::ShutdownInLoop, this));
   }; //提供给组件使用者的关闭接口，实际并不真正关闭，需判断有无数据待处理
@@ -1117,7 +1123,7 @@ class TcpServer {
 private:
   uint64_t _next_id; //自动增长的连接id
   int _port;
-  int _timeout;                   //非活跃连接统计时间
+  int _timeout;                  //非活跃连接统计时间
   bool _enable_inactive_release; //是否开启非活跃连接释放
   EventLoop _baseloop; //主线程的EventLoop对象，负责监听事件的处理
   Acceptor _acceptor; //监听套接字的管理对象
@@ -1142,19 +1148,21 @@ private:
     conn->SetClosedCallback(_closed_callback);
     conn->SetConnectedCallback(_connected_callback);
     conn->SetAnyEventCallback(_event_callback);
-    conn->SetServerClosedCallback(std::bind(&TcpServer::RemoveConnection, this, std::placeholders::_1));
-    if(_enable_inactive_release)
+    conn->SetServerClosedCallback(
+        std::bind(&TcpServer::RemoveConnection, this, std::placeholders::_1));
+    if (_enable_inactive_release)
       conn->EnableInactiveRelease(_timeout);
     conn->Established();
     _conns.insert(std::make_pair(_next_id, conn));
     _next_id++;
   };
-  void RemoveConnectionInLoop(const PtrConnection &conn){
-    int id = conn -> Id();
+  void RemoveConnectionInLoop(const PtrConnection &conn) {
+    int id = conn->Id();
     _conns.erase(id);
   };
-  void RemoveConnection(const PtrConnection &conn){
-    _baseloop.RunInLoop(std::bind(&TcpServer::RemoveConnectionInLoop, this, conn));
+  void RemoveConnection(const PtrConnection &conn) {
+    _baseloop.RunInLoop(
+        std::bind(&TcpServer::RemoveConnectionInLoop, this, conn));
   };
   void RunAfterInLoop(const Functor &task, int delay) {
     _next_id++;
@@ -1164,8 +1172,9 @@ private:
 public:
   TcpServer(int port)
       : _port(port), _next_id(0), _timeout(0), _enable_inactive_release(false),
-        _baseloop(), _acceptor(&_baseloop, _port), _pool(&_baseloop){
-    _acceptor.SetAcceptCallback(std::bind(&TcpServer::NewConnection, this, std::placeholders::_1)); 
+        _baseloop(), _acceptor(&_baseloop, _port), _pool(&_baseloop) {
+    _acceptor.SetAcceptCallback(
+        std::bind(&TcpServer::NewConnection, this, std::placeholders::_1));
     _acceptor.Listen();
   };
   void SetThreadCount(int count) { _pool.SetThreadCount(count); };
@@ -1187,9 +1196,9 @@ public:
     _baseloop.RunInLoop(
         std::bind(&TcpServer::RunAfterInLoop, this, task, delay));
   };
-  void Start() { 
-      _pool.Create();
-      _baseloop.Start();
+  void Start() {
+    _pool.Create();
+    _baseloop.Start();
   };
 };
 void TimerWheel::TimerAdd(uint64_t id, uint32_t delay, const TaskFunc &cb) {
@@ -1209,11 +1218,11 @@ void Channel::Remove() {
 void Channel::Update() { return _loop->UpdateEvent(this); };
 
 class NetWork {
-    public:
-        NetWork() {
-            DBG_LOG("SIGPIPE INIT");
-            signal(SIGPIPE, SIG_IGN);
-        }
+public:
+  NetWork() {
+    DBG_LOG("SIGPIPE INIT");
+    signal(SIGPIPE, SIG_IGN);
+  }
 };
 static NetWork nw;
 #endif

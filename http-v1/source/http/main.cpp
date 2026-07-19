@@ -16,6 +16,7 @@ std::string RequestStr(const HttpRequest &req) {
 }
 void Hello(const HttpRequest &req, HttpResponse *rsp) {
   rsp->SetContent(RequestStr(req), "text/plain");
+  sleep(30);
 }
 void Login(const HttpRequest &req, HttpResponse *rsp) {
   rsp->SetContent(RequestStr(req), "text/plain");
@@ -32,8 +33,8 @@ int main() {
   server.SetBaseDir(WWWROOT); //设置静态目录
   server.Get("/hello", Hello);
   server.Post("/login", Login);
-  server.Put("/1234", PutFile);
-  server.Delete("/123", DeleteFile);
+  server.Put("/1234.txt", PutFile);
+  server.Delete("/123.txt", DeleteFile);
   server.Listen();
   return 0;
 }
