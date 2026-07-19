@@ -16,13 +16,14 @@ std::string RequestStr(const HttpRequest &req) {
 }
 void Hello(const HttpRequest &req, HttpResponse *rsp) {
   rsp->SetContent(RequestStr(req), "text/plain");
-  sleep(30);
 }
 void Login(const HttpRequest &req, HttpResponse *rsp) {
   rsp->SetContent(RequestStr(req), "text/plain");
 }
 void PutFile(const HttpRequest &req, HttpResponse *rsp) {
-  rsp->SetContent(RequestStr(req), "text/plain");
+  //rsp->SetContent(RequestStr(req), "text/plain");
+  std::string pathname = WWWROOT + req._path;
+  Util::WriteFile(pathname, req._body);
 }
 void DeleteFile(const HttpRequest &req, HttpResponse *rsp) {
   rsp->SetContent(RequestStr(req), "text/plain");
