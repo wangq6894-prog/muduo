@@ -569,8 +569,7 @@ private:
   //这个函数应该每秒钟被执行一次，相当于秒针向后走了一步
   void RunTimerTask() {
     _tick = (_tick + 1) % _capacity;
-    _wheel[_tick]
-        .clear(); //清空指定位置的数组，就会把数组中保存的所有管理定时器对象的shared_ptr释放掉
+    _wheel[_tick].clear(); //清空指定位置的数组，就会把数组中保存的所有管理定时器对象的shared_ptr释放掉
   }
   void OnTime() {
     //根据实际超时的次数，执行对应的超时任务
@@ -764,9 +763,7 @@ private:
   }; //实例化EventLoop对象
 public:
   LoopThread()
-      : _loop(NULL), _thread(std::thread(&LoopThread::ThreadEntry, this)){
-
-                     };
+      : _loop(NULL), _thread(std::thread(&LoopThread::ThreadEntry, this)){};
   EventLoop *GetLoop() {
     EventLoop *loop = NULL;
     {
@@ -907,9 +904,7 @@ private:
     } else if (ret > 0) {
       _in_buffer.WriteAndPush(buf, ret);
       if (_in_buffer.ReadAbleSize() > 0) {
-        return _message_callback(
-            shared_from_this(),
-            &_in_buffer); // shared_from_this()返回当前对象的智能指针，用于在回调函数中使用当前对象的智能指针，使用需所属类集成std::enable_shared_from_this<类型名>
+        return _message_callback(shared_from_this(),&_in_buffer); // shared_from_this()返回当前对象的智能指针，用于在回调函数中使用当前对象的智能指针，使用需所属类集成std::enable_shared_from_this<类型名>
       }
     }
   };
@@ -1173,8 +1168,7 @@ public:
   TcpServer(int port)
       : _port(port), _next_id(0), _timeout(0), _enable_inactive_release(false),
         _baseloop(), _acceptor(&_baseloop, _port), _pool(&_baseloop) {
-    _acceptor.SetAcceptCallback(
-        std::bind(&TcpServer::NewConnection, this, std::placeholders::_1));
+    _acceptor.SetAcceptCallback(std::bind(&TcpServer::NewConnection, this, std::placeholders::_1));
     _acceptor.Listen();
   };
   void SetThreadCount(int count) { _pool.SetThreadCount(count); };

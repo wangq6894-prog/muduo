@@ -637,8 +637,7 @@ private:
     std::string body;
     body += "<html>";
     body += "<head>";
-    body +=
-        "<meta http-equiv='Content-Type' content='text/html; charset=utf-8'>";
+    body += "<meta http-equiv='Content-Type' content='text/html; charset=utf-8'>";
     body += "</head>";
     body += "<body>";
     body += "<h1>";
@@ -700,7 +699,7 @@ private:
       return false;
     }
     // 4.请求的资源路径必须存在
-    //如果请求的是根目录，这种情况给都变默认最佳一个index.html
+    //如果请求的是根目录，这种情况给都变默认追加一个index.html
     std::string req_path = _basedir + req._path;
     if (req._path.back() == '/') {
       req_path += "/index.html";
@@ -810,9 +809,7 @@ public:
     _server.EnableInactiveRelease(timeout);
     _server.SetConnectedCallback(
         std::bind(&HttpServer::OnConnected, this, std::placeholders::_1));
-    _server.SetMessageCallback(std::bind(&HttpServer::OnMessage, this,
-                                         std::placeholders::_1,
-                                         std::placeholders::_2));
+    _server.SetMessageCallback(std::bind(&HttpServer::OnMessage, this,std::placeholders::_1,std::placeholders::_2));
   }
   void SetBaseDir(const std::string &path) {
     bool ret = Util::IsDirectory(path);
