@@ -309,6 +309,9 @@ public:
     Split(path, "/", &subdir);
     int level = 0;
     for (auto &dir : subdir) {
+      if (dir == ".") {
+        continue; // "." 不改变目录深度；若计入深度，可用 "/./.." 垫高层级绕过检查
+      }
       if (dir == "..") {
         level--; //任意一层走出相对根目录，就认为有问题
         if (level < 0)
@@ -384,7 +387,18 @@ public:
       return 0;
     }
     std::string clen = GetHeader("Content-Length");
-    return std::stoi(clen);
+    // 只接受纯数字：std::stoi 遇到非法字符或溢出会抛异常，未捕获会直接终止进程
+    if (clen.empty() || clen.size() > 18) {
+      return 0;
+    }
+    size_t len = 0;
+    for (char c : clen) {
+      if (c < '0' || c > '9') {
+        return 0;
+      }
+      len = len * 10 + (c - '0');
+    }
+    return len;
   };
   //判断是否为长连接
   bool IsKeepAlive() {
@@ -586,9 +600,7 @@ private:
       _recv_statu = RECV_HTTP_OVER;
       return true;
     }
-    //  如果缓冲区中数据，包含了当前请求的所有正文，则去除所需的数据
-    _request._body.append(buf->ReadAsStringAndPop(real_len));
-    //  如果无法满足，数据不足，取出数据然后等待数据
+    //  数据不足：把当前已有的正文全部取走，等待剩余数据到达后再继续解析
     _request._body.append(buf->ReadPosition(), buf->ReadAbleSize());
     buf->MoveReadOffset(buf->ReadAbleSize());
     return true;
