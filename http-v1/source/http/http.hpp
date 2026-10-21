@@ -323,6 +323,7 @@ public:
     return true;
   }
 };
+//请求
 class HttpRequest {
 public:
   std::string _method;
@@ -402,13 +403,15 @@ public:
   };
   //判断是否为长连接
   bool IsKeepAlive() {
-    if (HasHeader("Connection") == true &&
-        GetHeader("Connection") == "keep-alive") {
-      return true;
+    if (_version == "HTTP/1.0") {
+        // 1.0 只有显式 keep-alive 才长连接
+        return HasHeader("Connection") && GetHeader("Connection") == "keep-alive";
     }
-    return false;
+    // 1.1 只有显式 close 才短连接
+    return !(HasHeader("Connection") && GetHeader("Connection") == "close");
   };
 };
+//响应
 class HttpResponse {
 public:
   int _statu;
@@ -464,7 +467,13 @@ typedef enum {
   RECV_HTTP_OVER
 } HttpRecvStatu;
 #define MAX_LINE 8192
-//上下文模板
+//HTTP请求报文格式
+/*GET /index.html?a=1 HTTP/1.1\r\n   ← 请求行：空格分三段
+Host: localhost\r\n                ← 头部：冒号分两段，空行结束
+Content-Length: 5\r\n
+\r\n
+hello                              ← 正文：按长度取*/
+//请求解析状态机
 class HttpContext {
 private:
   int _resp_statu;           //响应码
@@ -472,7 +481,7 @@ private:
   HttpRequest _request;      //已解得的状态信息
 
 private:
-  //接受并解析请求行
+  //接收并解析请求行
   bool RecvHttpLine(std::string str) {
     std::smatch matches;
     std::regex e("(GET|HEAD|POST|PUT|DELETE) ([^?]*)(?:\\?(.*))? "
@@ -514,27 +523,6 @@ private:
     }
     //首行处理完毕，进入头部获取阶段
     _recv_statu = RECV_HTTP_HEAD;
-    return true;
-  };
-  //读取原始行
-  bool ParseHttpLine(Buffer *buf) {
-    std::string line = buf->GetLine();
-    if (line.size() == 0) {
-      //缓冲区中数据不足一行，此时需判断缓冲区中可读数据长度，如果很长却不足一行，就认为是错误URI
-      // TOO LONG
-      if (buf->ReadAbleSize() > MAX_LINE) {
-        _recv_statu = RECV_HTTP_ERROR;
-        _resp_statu = 414;
-        return false;
-      }
-      return true;
-    }
-    if (line.size() > MAX_LINE) {
-      _recv_statu = RECV_HTTP_ERROR;
-      _resp_statu = 414;
-      return false;
-    }
-    buf->MoveReadOffset(line.size());
     return true;
   };
   //解析请求头
@@ -632,6 +620,7 @@ public:
     }
   };
 };
+//负责分发任务和组织响应
 class HttpServer {
 private:
   using Handler = std::function<void(const HttpRequest &, HttpResponse *)>;

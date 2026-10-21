@@ -90,7 +90,7 @@ public:
     assert(len <= TailIdleSize());
     _writer_idx += len;
   };
-  //确保可写空间足够(整体空闲空间够了就移动数据，否则就扩容)
+  //确保可写空间足够(整体空闲空间够就移动数据，否则就扩容)
   void EnsureWriteSpace(uint64_t len) {
     if (len <= TailIdleSize()) {
       return;
@@ -417,11 +417,10 @@ public:
       //触发连接断开事件
       if (_close_callback)
         _close_callback();
-      //不管任何时间都触发任意事件回调
-      if (_event_callback) {
-        //触发任意事件回调
-        _event_callback();
-      }
+    }
+    //任意事件都触发任意事件回调
+    if (_event_callback) {
+      _event_callback();
     }
   }
 };
@@ -453,8 +452,8 @@ public:
   };
   void UpdateEvent(Channel *channel) {
     bool ret = HasChannel(channel);
+    //不存在则添加
     if (ret == false) {
-      //不存在则添加
       _channels.insert(std::make_pair(channel->Fd(), channel));
       return Update(channel, EPOLL_CTL_ADD);
     }
@@ -1120,8 +1119,7 @@ private:
   EventLoop _baseloop; //主线程的EventLoop对象，负责监听事件的处理
   Acceptor _acceptor; //监听套接字的管理对象
   LoopThreadPool _pool; //线程池对象，负责创建线程以及分配EventLoop
-  std::unordered_map<uint64_t, PtrConnection>
-      _conns; //连接管理器，负责管理所有连接
+  std::unordered_map<uint64_t, PtrConnection> _conns; //连接管理器，负责管理所有连接
   using ConnectedCallback = std::function<void(const PtrConnection &)>;
   using MessageCallback = std::function<void(const PtrConnection &, Buffer *)>;
   using ClosedCallback = std::function<void(const PtrConnection &)>;
