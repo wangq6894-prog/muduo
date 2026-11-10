@@ -642,7 +642,7 @@ public:
     std::vector<Functor> functor;
     {
       std::unique_lock<std::mutex> lock(_mutex);
-      _tasks.swap(functor);
+      _tasks.swap(functor);//swap-to-local 把成员容器 swap 到局部变量再处理
     }
     for (auto &f : functor) {
       f();
@@ -669,7 +669,7 @@ public:
     return;
   };
   void WakeUpEventFd() {
-    uint64_t val = 0;
+    uint64_t val = 1;
     int ret = write(_event_fd, &val, sizeof(val));
     if (ret < 0) {
       if (errno == EINTR)
@@ -707,7 +707,8 @@ public:
     } else {
       return QueueInLoop(cb);
     }
-  }; //判断将要执行的任务是否已经处于当前线程中，如已经存在则执行，不存在则压入队列
+  }; 
+  //判断将要执行的任务是否已经处于当前线程中，如已经存在则执行，不存在则压入队列
   void AssertInLoop() { assert(_thread_id == std::this_thread::get_id()); }
   void QueueInLoop(Functor cb) {
     {
